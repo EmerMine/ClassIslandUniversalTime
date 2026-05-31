@@ -1,5 +1,5 @@
-# ClassIslandUniversalTime (CIUT)
-CIUT 可以读取 ClassIsland 的配置文件并将 Windows 时间设为偏移后的时间，支持 ClassIsland 1.x 与 2.x。
+# ClassIslandUniversalTime-PowerShell (CIUT-PS)
+CIUT-PS 可以读取 ClassIsland 的配置文件并将 Windows 时间设为偏移后的时间，支持 ClassIsland 1.x 与 2.x。
 
 > [!WARNING]
 > 本项目使用 vibe-coding 方式编写，若您对该方式存在固有的排斥感，请忽略此项目。
