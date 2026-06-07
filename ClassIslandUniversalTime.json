@@ -1,6 +1,4 @@
 {
-  "Debug": true,
-  "SettingsJsonPath": "D:\\Program_Files\\CI_2.0.3.0\\data\\Settings.json",
+  "Debug": false,
   "NtpServer": "ntp.aliyun.com",
-  "CompensationSeconds": 0.0
 }
