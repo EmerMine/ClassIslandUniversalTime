@@ -50,6 +50,9 @@ if (-not $ConfigPath) {
 }
 $connectorScriptPath = Join-Path $scriptDir "ClassIslandConnecter.ps1"
 
+# 脚本版本信息
+$scriptVersion = "1.2.0"
+
 # ---------- 加载 WinForms 和 DPI 设置 ----------
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -93,12 +96,59 @@ catch {
 
 # 添加标题菜单项（无法选中）
 $titleItem = New-Object System.Windows.Forms.ToolStripMenuItem
-$titleItem.Text = "ClassIsland 配置文件监控"
+$titleItem.Text = "ClassIsland 配置文件监控 v$scriptVersion"
 $titleItem.Enabled = $false
 $contextMenu.Items.Add($titleItem) | Out-Null
 
 # 添加分隔符
 $contextMenu.Items.Add("-") | Out-Null
+
+# 添加"识别到的 ClassIsland 版本"菜单项（不可选择）
+$versionInfoItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$versionInfoItem.Text = "识别到的 ClassIsland 版本: 未知"
+$versionInfoItem.Enabled = $false
+$contextMenu.Items.Add($versionInfoItem) | Out-Null
+
+# 添加"当前 ClassIsland 内偏移时间"菜单项（不可选择）
+$offsetInfoItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$offsetInfoItem.Text = "当前 ClassIsland 内偏移时间: 未知"
+$offsetInfoItem.Enabled = $false
+$contextMenu.Items.Add($offsetInfoItem) | Out-Null
+
+# 添加分隔符
+$contextMenu.Items.Add("-") | Out-Null
+
+# 添加"ClassIsland 退出后自动退出程序"菜单项
+$autoExitItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$autoExitItem.Text = "ClassIsland 退出后自动退出程序"
+$autoExitItem.CheckOnClick = $true
+$autoExitItem.Add_Click({
+    $script:autoExitOnClassIslandExit = $autoExitItem.Checked
+    Save-Settings
+})
+$contextMenu.Items.Add($autoExitItem) | Out-Null
+
+# 添加"退出程序后恢复系统时间"菜单项
+$restoreTimeItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$restoreTimeItem.Text = "退出程序后恢复系统时间"
+$restoreTimeItem.CheckOnClick = $true
+$restoreTimeItem.Add_Click({
+    $script:restoreTimeOnExit = $restoreTimeItem.Checked
+    Save-Settings
+})
+$contextMenu.Items.Add($restoreTimeItem) | Out-Null
+
+# 添加分隔符
+$contextMenu.Items.Add("-") | Out-Null
+
+# 添加"关于"菜单项
+$aboutItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$aboutItem.Text = "关于"
+$aboutItem.Add_Click({
+        $aboutMessage = "版本: $scriptVersion`nhttps://github.com/EmerMine/ClassIslandUniversalTime-PowerShell"
+    Write-MonitorLog -Message $aboutMessage -Level "Success"
+})
+$contextMenu.Items.Add($aboutItem) | Out-Null
 
 # 添加退出菜单项
 $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
@@ -113,6 +163,130 @@ $notifyIcon.ContextMenuStrip = $contextMenu
 $balloonQueue = New-Object System.Collections.Queue
 $lastBalloonTime = [DateTime]::MinValue
 $balloonCooldownMs = 2000
+
+# 设置项（从配置文件读取）
+$autoExitOnClassIslandExit = $false
+$restoreTimeOnExit = $false
+
+# ClassIsland 运行状态跟踪
+$classIslandWasRunning = $false
+$classIslandExePath = $null
+$classIslandVersion = $null
+
+function Load-Settings {
+    $config = Read-CiConfig
+    if ($config) {
+        if ($config.AutoExitOnClassIslandExit -eq $true) {
+            $script:autoExitOnClassIslandExit = $true
+        }
+        if ($config.RestoreTimeOnExit -eq $true) {
+            $script:restoreTimeOnExit = $true
+        }
+    }
+}
+
+function Save-Settings {
+    $config = Read-CiConfig
+    if (-not $config) {
+        $config = @{}
+    }
+    # 创建新的配置对象，确保所有字段都被正确保存
+    $newConfig = [PSCustomObject]@{
+        Debug = if ($config.Debug -eq $null) { $false } else { $config.Debug }
+        SettingsJsonPath = $config.SettingsJsonPath
+        NtpServer = if ($config.NtpServer -eq $null) { "ntp.aliyun.com" } else { $config.NtpServer }
+        CompensationSeconds = if ($config.CompensationSeconds -eq $null) { 0.0 } else { $config.CompensationSeconds }
+        AutoExitOnClassIslandExit = $script:autoExitOnClassIslandExit
+        RestoreTimeOnExit = $script:restoreTimeOnExit
+    }
+    $newConfig | ConvertTo-Json -Depth 10 | Set-Content $ConfigPath -Encoding UTF8
+}
+
+function Get-ClassIslandExePath {
+    param([string]$settingsJsonPath)
+    if (-not $settingsJsonPath) { return $null }
+    try {
+        $settingsDir = Split-Path -Parent $settingsJsonPath
+        $classIslandDir = Split-Path -Parent $settingsDir
+        $exePath = Join-Path $classIslandDir "ClassIsland.exe"
+        if (Test-Path $exePath) {
+            return $exePath
+        }
+    }
+    catch { }
+    return $null
+}
+
+function Get-ClassIslandVersion {
+    param([string]$exePath)
+    if (-not $exePath -or -not (Test-Path $exePath)) { return $null }
+    try {
+        $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
+        return $versionInfo.FileVersion
+    }
+    catch { }
+    return $null
+}
+
+function Compare-Version {
+    param([string]$version1, [string]$version2)
+    try {
+        $v1Parts = $version1.Split('.')
+        $v2Parts = $version2.Split('.')
+        for ($i = 0; $i -lt [Math]::Max($v1Parts.Length, $v2Parts.Length); $i++) {
+            $v1 = if ($i -lt $v1Parts.Length) { [int]$v1Parts[$i] } else { 0 }
+            $v2 = if ($i -lt $v2Parts.Length) { [int]$v2Parts[$i] } else { 0 }
+            if ($v1 -gt $v2) { return 1 }
+            if ($v1 -lt $v2) { return -1 }
+        }
+        return 0
+    }
+    catch { return 0 }
+}
+
+function Test-ClassIslandRunning {
+    param([string]$exePath, [string]$version)
+    if (-not $exePath) { return $false }
+    try {
+        $classIslandDir = Split-Path -Parent $exePath
+        # 版本 >= 2.0.0.0 检测 ClassIsland.Desktop.exe
+        if ($version -and (Compare-Version -version1 $version -version2 "2.0.0.0") -ge 0) {
+            $desktopExe = Join-Path $classIslandDir "ClassIsland.Desktop.exe"
+            $processName = "ClassIsland.Desktop"
+        }
+        else {
+            $processName = "ClassIsland"
+        }
+        $process = Get-Process -Name $processName -ErrorAction SilentlyContinue
+        return ($null -ne $process)
+    }
+    catch { }
+    return $false
+}
+
+function Restore-SystemTime {
+    Write-MonitorLog -Message "正在恢复系统时间..." -Level "Info"
+    try {
+        # 调用 UniversalTime.ps1 -Restore 还原时间
+        $universalScriptPath = Join-Path $scriptDir "UniversalTime.ps1"
+        if (Test-Path $universalScriptPath) {
+            & $universalScriptPath -Restore
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+                Write-MonitorLog -Message "已恢复系统时间" -Level "Success"
+            }
+            else {
+                Write-MonitorLog -Message "恢复系统时间失败，退出码: $exitCode" -Level "Error"
+            }
+        }
+        else {
+            Write-MonitorLog -Message "未找到 UniversalTime.ps1，无法恢复系统时间" -Level "Error"
+        }
+    }
+    catch {
+        Write-MonitorLog -Message "恢复系统时间时发生错误: $_" -Level "Error"
+    }
+}
 
 function Write-MonitorLog {
     param([string]$Message, [string]$Level = "Info")
@@ -239,7 +413,33 @@ if (-not $settingsJsonPath) {
     exit 1
 }
 
+# 加载设置
+Load-Settings
+
+# 更新菜单项勾选状态
+$autoExitItem.Checked = $autoExitOnClassIslandExit
+$restoreTimeItem.Checked = $restoreTimeOnExit
+
+# 初始化 ClassIsland 运行状态检测
+$classIslandExePath = Get-ClassIslandExePath -settingsJsonPath $settingsJsonPath
+if ($classIslandExePath) {
+    $classIslandVersion = Get-ClassIslandVersion -exePath $classIslandExePath
+    $classIslandWasRunning = Test-ClassIslandRunning -exePath $classIslandExePath -version $classIslandVersion
+    if ($classIslandWasRunning) {
+        Write-MonitorLog -Message "检测到 ClassIsland 正在运行" -Level "Info"
+    }
+    # 更新版本信息菜单项
+    if ($classIslandVersion) {
+        $versionInfoItem.Text = "识别到的 ClassIsland 版本: $classIslandVersion"
+    }
+}
+
 $lastOffset = Get-TimeOffsetFromSettingsJson -settingsJsonPath $settingsJsonPath
+
+# 更新偏移时间菜单项
+if ($null -ne $lastOffset) {
+    $offsetInfoItem.Text = "当前 ClassIsland 内偏移时间: $lastOffset 秒"
+}
 
 # Write-MonitorLog -Message "首次运行 ClassIslandConnecter.ps1..." -Level "Info"
 try {
@@ -265,6 +465,8 @@ $watcher.EnableRaisingEvents = $false
 $watcher.NotifyFilter = [System.IO.NotifyFilters]::LastWrite -bor [System.IO.NotifyFilters]::Size
 
 $stableDelayMs = 500
+$classIslandCheckIntervalMs = 3000  # ClassIsland 运行状态检测间隔
+$lastClassIslandCheck = [DateTime]::MinValue
 $running = $true
 $fileChanged = $false
 
@@ -286,6 +488,20 @@ try {
         # 处理 UI 事件（关键：保持菜单响应）
         [System.Windows.Forms.Application]::DoEvents()
         
+        # 检测 ClassIsland 是否退出（仅在启动时 ClassIsland 正在运行且设置项开启时检测）
+        if ($autoExitOnClassIslandExit -and $classIslandWasRunning) {
+            $now = Get-Date
+            if (($now - $lastClassIslandCheck).TotalMilliseconds -ge $classIslandCheckIntervalMs) {
+                $script:lastClassIslandCheck = $now
+                $isRunning = Test-ClassIslandRunning -exePath $classIslandExePath -version $classIslandVersion
+                if (-not $isRunning) {
+                    Write-MonitorLog -Message "检测到 ClassIsland 已退出，脚本将自动退出" -Level "Success"
+                    $script:running = $false
+                    break
+                }
+            }
+        }
+        
         # 检查文件变化
         if ($global:fileChanged) {
             Start-Sleep -Milliseconds $stableDelayMs
@@ -305,6 +521,8 @@ try {
 
                 if ($changed) {
                     $lastOffset = $currentOffset
+                    # 更新偏移时间菜单项
+                    $offsetInfoItem.Text = "当前 ClassIsland 内偏移时间: $currentOffset 秒"
                     Write-MonitorLog -Message "TimeOffsetSeconds 已变化，正在调用 ClassIslandConnecter.ps1..." -Level "Info"
                     try {
                         & $connectorScriptPath
@@ -313,7 +531,7 @@ try {
                             Write-MonitorLog -Message "ClassIslandConnecter.ps1 执行返回退出码: $exitCode" -Level "Warning"
                         }
                         else {
-                            Write-MonitorLog -Message "当前时间偏移值为 $offsetDisplay `n已更改系统时间" -Level "Success"
+                            Write-MonitorLog -Message "当前时间偏移值为 $currentOffset `n已更改系统时间" -Level "Success"
                         }
                     }
                     catch {
@@ -333,9 +551,17 @@ finally {
     if ($job) {
         Unregister-Event -SubscriptionId $job.Id -ErrorAction SilentlyContinue
     }
+
+    # 删除托盘图标
     if ($notifyIcon) {
         $notifyIcon.Visible = $false
         $notifyIcon.Dispose()
     }
+    
+    # 恢复系统时间（如果设置）
+    if ($restoreTimeOnExit) {
+        Restore-SystemTime
+    }
+    
     Write-MonitorLog -Message "监控已停止。" -Level "Info"
 }
