@@ -81,7 +81,7 @@ function Read-Config {
 
 function Write-Config {
     param([double]$compValue, [string]$ntpServer)
-    # 保留现有配置中的 Debug 和 SettingsJsonPath 字段
+    # 读取现有配置中的所有字段
     $existingConfig = $null
     if (Test-Path $configPath) {
         try {
@@ -90,10 +90,12 @@ function Write-Config {
         catch { }
     }
     $config = @{
-        Debug                = if ($existingConfig -and $null -ne $existingConfig.Debug) { $existingConfig.Debug } else { $false }
-        SettingsJsonPath     = if ($existingConfig -and $existingConfig.SettingsJsonPath) { $existingConfig.SettingsJsonPath } else { $null }
-        CompensationSeconds  = $compValue
-        NtpServer            = $ntpServer
+        Debug                      = if ($existingConfig -and $null -ne $existingConfig.Debug) { $existingConfig.Debug } else { $false }
+        SettingsJsonPath           = if ($existingConfig -and $existingConfig.SettingsJsonPath) { $existingConfig.SettingsJsonPath } else { $null }
+        CompensationSeconds        = $compValue
+        NtpServer                  = $ntpServer
+        AutoExitOnClassIslandExit  = if ($existingConfig -and $existingConfig.AutoExitOnClassIslandExit -eq $true) { $true } else { $false }
+        RestoreTimeOnExit          = if ($existingConfig -and $existingConfig.RestoreTimeOnExit -eq $true) { $true } else { $false }
     }
     $config | ConvertTo-Json | Set-Content $configPath
     Write-Host "配置已保存到: $configPath (补偿值=$compValue, NTP服务器=$ntpServer)" -ForegroundColor Green
