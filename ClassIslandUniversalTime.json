@@ -1,4 +1,6 @@
 {
   "Debug": false,
   "NtpServer": "ntp.aliyun.com",
+  "AutoExitOnClassIslandExit": true,
+  "RestoreTimeOnExit": true
 }
